@@ -1,37 +1,17 @@
 import secrets
 import os
 from PIL import Image
-from flask import render_template, url_for, flash, redirect, request
+from flask import render_template, url_for, flash, redirect, request, abort
 from flaskblog import app, db, bcrypt
-from flaskblog.forms import RegistrationForm, LoginForm, UpdateAccountForm
+from flaskblog.forms import RegistrationForm, LoginForm, UpdateAccountForm, PostForm
 from flaskblog.models import User, Post
 from flask_login import login_user, current_user, logout_user, login_required
-
-posts = [
-    {
-        'author': 'Corey Shaffer',
-        'title': 'Blog post 1',
-        'content': 'Blog 1  content',
-        'date_posted': 'April 20, 2018'
-    },
-    {
-        'author': 'Bill Gates',
-        'title': 'My way',
-        'content': 'My way  content',
-        'date_posted': 'April 20, 2019'
-    },
-    {
-        'author': 'Tim Cook',
-        'title': 'My apple',
-        'content': 'My apple  content',
-        'date_posted': 'April 20, 2020'
-    }
-]
 
 
 @app.route('/')
 @app.route('/home')
 def home():
+    posts = Post.query.all()
     return render_template('home.html', posts=posts)
 
 
@@ -78,16 +58,18 @@ def logout():
     logout_user()
     return redirect(url_for('home'))
 
+
 def save_picture(form_picture):
     random_hex = secrets.token_hex(8)
     _, f_ext = os.path.splitext(form_picture.filename)
     picture_fn = random_hex + f_ext
     picture_path = os.path.join(app.root_path, 'static/profile_pics', picture_fn)
-    output_size = (125,125)
+    output_size = (125, 125)
     i = Image.open(form_picture)
     i.thumbnail(output_size)
     i.save(picture_path)
     return picture_fn
+
 
 @app.route("/account", methods=['GET', 'POST'])
 @login_required
@@ -107,3 +89,53 @@ def account():
         form.email.data = current_user.email
     image_file = url_for('static', filename='profile_pics/' + current_user.image_file)
     return render_template('account.html', title='Account', image_file=image_file, form=form)
+
+
+@app.route("/post/new", methods=['GET', 'POST'])
+@login_required
+def new_post():
+    form = PostForm()
+    if form.validate_on_submit():
+        _post = Post(title=form.title.data, content=form.content.data, author=current_user)
+        db.session.add(_post)
+        db.session.commit()
+        flash('Your post has been created', 'success')
+        return redirect(url_for('home'))
+    return render_template('create_post.html', title='New title', form=form, legend="Create post")
+
+
+@app.route("/post/<int:post_id>")
+def post(post_id):
+    _post = Post.query.get_or_404(post_id)
+    return render_template('post.html', title=_post.title, post=_post)
+
+
+@app.route("/post/<int:post_id>/update", methods=['GET', 'POST'])
+@login_required
+def update_post(post_id):
+    _post = Post.query.get_or_404(post_id)
+    if _post.author != current_user:
+        abort(403)
+    form = PostForm()
+    if form.validate_on_submit():
+        _post.title = form.title.data
+        _post.content = form.content.data
+        db.session.commit()
+        flash('Your post has been updated', 'success')
+        return redirect(url_for('post', post_id=_post.id))
+    elif request.method == 'GET':
+        form.title.data = _post.title
+        form.content.data = _post.content
+    return render_template('create_post.html', title='Update title', form=form, legend="Update post")
+
+
+@app.route("/post/<int:post_id>/delete", methods=['POST'])
+@login_required
+def delete_post(post_id):
+    _post = Post.query.get_or_404(post_id)
+    if _post.author != current_user:
+        abort(403)
+    db.session.delete(_post)
+    db.session.commit()
+    flash('Your post has been deleted!', 'success')
+    return redirect(url_for('home'))
